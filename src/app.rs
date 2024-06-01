@@ -1,10 +1,10 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use rand::Rng;
+
 use cpal::{Device, Stream};
 use egui::{Color32, Pos2};
-use std::collections::VecDeque;
-use rustfft::FftPlanner;
 use rustfft::num_complex::Complex;
+use rustfft::FftPlanner;
+use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -68,11 +68,10 @@ impl Js8App {
                 &config.into(),
                 move |data: &[f32], _: &cpal::InputCallbackInfo| {
                     if data.len() == 960 {
-                        let mut buffer: Vec<Complex<f32>> = data
-                            .iter()
-                            .map(|&x| Complex { re: x, im: 0.0 })
-                            .collect();
-                        let mut scratch = vec![Complex { re: 0.0, im: 0.0 }; fft.get_inplace_scratch_len()];
+                        let mut buffer: Vec<Complex<f32>> =
+                            data.iter().map(|&x| Complex { re: x, im: 0.0 }).collect();
+                        let mut scratch =
+                            vec![Complex { re: 0.0, im: 0.0 }; fft.get_inplace_scratch_len()];
 
                         fft.process_with_scratch(&mut buffer, &mut scratch);
 
