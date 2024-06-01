@@ -1,6 +1,6 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{Device, Stream, StreamConfig};
-use egui::{Color32, Pos2, Rect, Vec2};
+use cpal::{Device, Stream};
+use egui::{Color32, Pos2};
 use std::sync::{Arc, Mutex};
 
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -120,7 +120,7 @@ impl eframe::App for Js8App {
 
             // Dropdown for selecting the input device
             egui::ComboBox::from_label("Select Input Device")
-                .selected_text(format!("{}", self.devices[self.selected_device_index].name().unwrap()))
+                .selected_text(self.devices[self.selected_device_index].name().unwrap().to_string())
                 .show_ui(ui, |ui| {
                     for (index, device) in self.devices.iter().enumerate() {
                         ui.selectable_value(&mut self.selected_device_index, index, device.name().unwrap());
