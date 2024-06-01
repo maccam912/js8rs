@@ -1,6 +1,10 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use rand::Rng;
 use cpal::{Device, Stream};
 use egui::{Color32, Pos2};
+use std::collections::VecDeque;
+use rustfft::FftPlanner;
+use rustfft::num_complex::Complex;
 use std::sync::{Arc, Mutex};
 
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -17,6 +21,12 @@ pub struct Js8App {
     devices: Vec<Device>,
     #[serde(skip)]
     selected_device_index: usize,
+    #[serde(skip)]
+    fft_buffer: Arc<Mutex<VecDeque<Vec<f32>>>>,
+    #[serde(skip)]
+    fft_planner: FftPlanner<f32>,
+    #[serde(skip)]
+    row_colors: Arc<Mutex<Vec<Vec<Color32>>>>,
 }
 
 impl Default for Js8App {
@@ -30,6 +40,9 @@ impl Default for Js8App {
             stream: None,
             devices,
             selected_device_index: 0,
+            fft_buffer: Arc::new(Mutex::new(VecDeque::new())),
+            fft_planner: FftPlanner::new(),
+            row_colors: Arc::new(Mutex::new(vec![])),
         }
     }
 }
@@ -43,21 +56,44 @@ impl Js8App {
     }
 
     fn start_audio_stream(&mut self) {
-        let device = &self.devices[self.selected_device_index];
+        let device = self.devices[self.selected_device_index].clone();
         let config = device.default_input_config().unwrap();
 
+        let fft = self.fft_planner.plan_fft_forward(960); // Plan a forward FFT of size 960
+        let fft_buffer = self.fft_buffer.clone();
         let audio_data = self.audio_data.clone();
 
         let stream = device
             .build_input_stream(
                 &config.into(),
                 move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                    if !data.is_empty() {
-                        let mut audio_data = audio_data.lock().unwrap();
-                        audio_data.extend_from_slice(data);
-                        if audio_data.len() > 1024 * 1024 {
-                            audio_data.drain(..data.len());
+                    if data.len() == 960 {
+                        let mut buffer: Vec<Complex<f32>> = data
+                            .iter()
+                            .map(|&x| Complex { re: x, im: 0.0 })
+                            .collect();
+                        let mut scratch = vec![Complex { re: 0.0, im: 0.0 }; fft.get_inplace_scratch_len()];
+
+                        fft.process_with_scratch(&mut buffer, &mut scratch);
+
+                        // Print the first few FFT results to the console
+                        for (i, complex) in buffer.iter().take(10).enumerate() {
+                            println!("FFT result[{}]: {:?}", i, complex);
                         }
+
+                        // Store the FFT result for later use
+                        {
+                            let mut fft_buffer = fft_buffer.lock().unwrap();
+                            fft_buffer.push_back(buffer.iter().map(|c| c.re).collect());
+                        }
+
+                        // Store the audio data for later use
+                        {
+                            let mut audio_data = audio_data.lock().unwrap();
+                            audio_data.extend_from_slice(data);
+                        }
+                    } else {
+                        eprintln!("Received unexpected number of samples: {}", data.len());
                     }
                 },
                 move |err| {
@@ -72,29 +108,90 @@ impl Js8App {
     }
 
     fn draw_waterfall(&self, ui: &mut egui::Ui) {
-        let audio_data = self.audio_data.lock().unwrap();
-
-        let width = ui.available_width();
-        let height = ui.available_height();
         let rect = ui.available_rect_before_wrap();
+        let (rect_width, rect_height) = (rect.width() as usize, rect.height() as usize);
 
-        ui.painter().rect_filled(rect, 0.0, Color32::BLACK);
+        let fft_buffer = self.fft_buffer.lock().unwrap();
+        let fft_data: Vec<f32> = fft_buffer.iter().flatten().cloned().collect();
+        // Limit the history of samples to the width of the rectangle
+        let fft_data = if fft_data.len() > rect_width {
+            &fft_data[fft_data.len() - rect_width..]
+        } else {
+            &fft_data[..]
+        };
 
-        let sample_rate = 44100; // Assuming a sample rate of 44.1 kHz
-        let num_samples = std::cmp::min(audio_data.len(), sample_rate); // Limit to the last second of data
+        // Reduce the resolution of the spectrum by drawing every nth FFT result
+        let resolution = 4; // Change this value to adjust the resolution
+        let max_value = fft_data.iter().cloned().fold(0.0 / 0.0, f32::max);
 
-        if num_samples > 0 {
-            let step = width / num_samples as f32;
-            let start_index = audio_data.len().saturating_sub(sample_rate);
-            for (i, &sample) in audio_data[start_index..].iter().enumerate() {
-                let x = rect.min.x + i as f32 * step;
-                let y = rect.min.y + height / 2.0 - sample * height / 2.0;
-                ui.painter().line_segment(
-                    [Pos2::new(x, rect.min.y + height / 2.0), Pos2::new(x, y)],
-                    (1.0, Color32::WHITE),
+        // Lock the row_colors buffer
+        let mut row_colors = self.row_colors.lock().unwrap();
+
+        // Initialize the buffer if it's empty
+        if row_colors.is_empty() {
+            *row_colors = vec![vec![Color32::BLACK; rect_width]; rect_height];
+        }
+
+        // Shift the rows down faster by shifting more rows at a time
+        let shift_amount = 2; // Increase this value to scroll faster
+        for i in (shift_amount..rect_height).rev() {
+            row_colors[i] = row_colors[i - shift_amount].clone();
+        }
+
+        // Fill the top rows with the current FFT data
+        for j in (0..rect_width).step_by(resolution) {
+            let intensity = if let Some(&value) = fft_data.get(j) {
+                value / max_value // Normalize the intensity
+            } else {
+                0.0
+            };
+            let color = Self::intensity_to_color(intensity);
+            for k in 0..shift_amount {
+                row_colors[k][j] = color;
+            }
+        }
+
+        // Draw the waterfall with taller rows
+        let row_height = 2.0; // Increase this value to make rows taller
+        for i in 0..rect_height {
+            for j in 0..rect_width {
+                ui.painter().rect_filled(
+                    egui::Rect::from_min_size(
+                        egui::Pos2::new(rect.min.x + j as f32, rect.min.y + i as f32 * row_height),
+                        egui::Vec2::new(1.0, row_height),
+                    ),
+                    0.0,
+                    row_colors[i][j],
                 );
             }
         }
+
+        // Draw red lines on the left and right of the spectrum
+        let line_color = Color32::RED;
+        let line_thickness = 2.0;
+
+        ui.painter().line_segment(
+            [
+                Pos2::new(rect.min.x, rect.min.y),
+                Pos2::new(rect.min.x, rect.max.y),
+            ],
+            (line_thickness, line_color),
+        );
+
+        ui.painter().line_segment(
+            [
+                Pos2::new(rect.max.x, rect.min.y),
+                Pos2::new(rect.max.x, rect.max.y),
+            ],
+            (line_thickness, line_color),
+        );
+    }
+
+    fn intensity_to_color(intensity: f32) -> Color32 {
+        let intensity = intensity.clamp(0.0, 1.0);
+        let r = (intensity * 255.0) as u8;
+        let b = ((1.0 - intensity) * 255.0) as u8;
+        Color32::from_rgb(r, 0, b)
     }
 }
 
@@ -137,9 +234,6 @@ impl eframe::App for Js8App {
                         );
                     }
                 });
-
-            // Add some space between the dropdown and the waterfall
-            ui.add_space(16.0);
 
             // Draw the waterfall visualization
             self.draw_waterfall(ui);
