@@ -48,22 +48,24 @@ impl Js8App {
 
         let audio_data = self.audio_data.clone();
 
-        let stream = device.build_input_stream(
-            &config.into(),
-            move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                if !data.is_empty() {
-                    let mut audio_data = audio_data.lock().unwrap();
-                    audio_data.extend_from_slice(data);
-                    if audio_data.len() > 1024 * 1024 {
-                        audio_data.drain(..data.len());
+        let stream = device
+            .build_input_stream(
+                &config.into(),
+                move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                    if !data.is_empty() {
+                        let mut audio_data = audio_data.lock().unwrap();
+                        audio_data.extend_from_slice(data);
+                        if audio_data.len() > 1024 * 1024 {
+                            audio_data.drain(..data.len());
+                        }
                     }
-                }
-            },
-            move |err| {
-                eprintln!("Stream error: {}", err);
-            },
-            None,
-        ).unwrap();
+                },
+                move |err| {
+                    eprintln!("Stream error: {}", err);
+                },
+                None,
+            )
+            .unwrap();
 
         stream.play().unwrap();
         self.stream = Some(stream);
@@ -120,10 +122,19 @@ impl eframe::App for Js8App {
 
             // Dropdown for selecting the input device
             egui::ComboBox::from_label("Select Input Device")
-                .selected_text(self.devices[self.selected_device_index].name().unwrap().to_string())
+                .selected_text(
+                    self.devices[self.selected_device_index]
+                        .name()
+                        .unwrap()
+                        .to_string(),
+                )
                 .show_ui(ui, |ui| {
                     for (index, device) in self.devices.iter().enumerate() {
-                        ui.selectable_value(&mut self.selected_device_index, index, device.name().unwrap());
+                        ui.selectable_value(
+                            &mut self.selected_device_index,
+                            index,
+                            device.name().unwrap(),
+                        );
                     }
                 });
 
