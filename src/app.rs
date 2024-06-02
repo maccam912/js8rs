@@ -86,39 +86,39 @@ impl Js8App {
         let fft = planner.plan_fft_forward(FFT_SIZE);
         let scratch = vec![Complex { re: 0.0, im: 0.0 }; fft.get_inplace_scratch_len()];
 
-        let stream = match device.build_input_stream(
-            &config.into(),
-            {
-                let audio_data = audio_data.clone();
-                let row_colors = row_colors.clone();
-                let max_value = max_value.clone();
-                let fft = fft.clone();
-                let mut scratch = scratch.clone();
-                move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                    let mut audio_data = audio_data.lock().unwrap();
-                    let mut row_colors = row_colors.lock().unwrap();
-                    let mut max_value = max_value.lock().unwrap();
-                    *max_value = Self::process_audio_data(
-                        *max_value,
-                        data,
-                        &mut audio_data,
-                        &mut row_colors,
-                        &*fft,
-                        &mut scratch,
-                    );
-                }
-            },
-            move |err| {
-                eprintln!("Stream error: {}", err);
-            },
-            None,
-        ) {
-            Ok(stream) => stream,
-            Err(err) => {
-                eprintln!("Failed to build input stream: {}", err);
-                return;
+        let input_callback = {
+            let audio_data = audio_data.clone();
+            let row_colors = row_colors.clone();
+            let max_value = max_value.clone();
+            let fft = fft.clone();
+            let mut scratch = scratch.clone();
+            move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                let mut audio_data = audio_data.lock().unwrap();
+                let mut row_colors = row_colors.lock().unwrap();
+                let mut max_value = max_value.lock().unwrap();
+                *max_value = Self::process_audio_data(
+                    *max_value,
+                    data,
+                    &mut audio_data,
+                    &mut row_colors,
+                    &*fft,
+                    &mut scratch,
+                );
             }
         };
+
+        let error_callback = move |err| {
+            eprintln!("Stream error: {}", err);
+        };
+
+        let stream =
+            match device.build_input_stream(&config.into(), input_callback, error_callback, None) {
+                Ok(stream) => stream,
+                Err(err) => {
+                    eprintln!("Failed to build input stream: {}", err);
+                    return;
+                }
+            };
 
         if let Err(err) = stream.play() {
             eprintln!("Failed to play stream: {}", err);
@@ -194,7 +194,11 @@ impl Js8App {
 
         let painter = ui.painter();
 
-        for (i, &color) in row_colors[0].iter().take(num_buckets.ceil() as usize).enumerate() {
+        for (i, &color) in row_colors[0]
+            .iter()
+            .take(num_buckets.ceil() as usize)
+            .enumerate()
+        {
             let value = color.r() as f32 / 255.0;
             let height = max_height * value;
             let rect = egui::Rect::from_min_size(
