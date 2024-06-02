@@ -31,7 +31,8 @@ pub fn update_ui(app: &mut Js8App, ctx: &egui::Context) {
                 }
             });
 
-        app.draw_bar_chart(ui);
+        // app.draw_bar_chart(ui);
+        app.draw_waterfall(ui);
     });
 
     ctx.request_repaint();
