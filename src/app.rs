@@ -1,12 +1,11 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{Device, Stream};
-use egui::debug_text::print;
-use egui::{Color32, Pos2};
-use std::borrow::Borrow;
+
+use egui::Color32;
+
+use rustfft::{num_complex::Complex, FftPlanner};
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
-use rustfft::{FftPlanner, num_complex::Complex};
-use std::f32::consts::PI;
 
 const FFT_SIZE: usize = 4800;
 const SAMPLE_RATE: f32 = 48000.0;
@@ -79,7 +78,10 @@ impl Js8App {
 
         // Ensure the sample rate matches 48 kHz
         if config.sample_rate().0 != SAMPLE_RATE as u32 {
-            eprintln!("Warning: The device sample rate is not 48 kHz, but {} Hz", config.sample_rate().0);
+            eprintln!(
+                "Warning: The device sample rate is not 48 kHz, but {} Hz",
+                config.sample_rate().0
+            );
         }
 
         let audio_data = self.audio_data.clone();
@@ -103,7 +105,15 @@ impl Js8App {
                     let mut audio_data = audio_data.lock().unwrap();
                     let mut row_colors = row_colors.lock().unwrap();
                     let mut max_value = max_value.lock().unwrap();
-                    *max_value = Self::process_audio_data(*max_value, data, &mut audio_data, &mut row_colors, &*fft, &mut scratch, num_buckets);
+                    *max_value = Self::process_audio_data(
+                        *max_value,
+                        data,
+                        &mut audio_data,
+                        &mut row_colors,
+                        &*fft,
+                        &mut scratch,
+                        num_buckets,
+                    );
                 }
             },
             move |err| {
@@ -135,7 +145,6 @@ impl Js8App {
         scratch: &mut [Complex<f32>],
         num_buckets: usize,
     ) -> f32 {
-
         for &sample in data {
             if audio_data.len() == FFT_SIZE {
                 audio_data.pop_front();
@@ -145,32 +154,37 @@ impl Js8App {
 
         // Perform FFT on the audio data
         if audio_data.len() == FFT_SIZE {
-            let mut buffer: Vec<Complex<f32>> = audio_data.iter().map(|&x| Complex { re: x, im: 0.0 }).collect();
+            let mut buffer: Vec<Complex<f32>> = audio_data
+                .iter()
+                .map(|&x| Complex { re: x, im: 0.0 })
+                .collect();
             fft.process_with_scratch(&mut buffer, scratch);
 
             // Use raw FFT values
-            let raw_values: Vec<f32> = buffer.iter()
-                .take(num_buckets)
-                .map(|c| c.norm())
-                .collect();
+            let raw_values: Vec<f32> = buffer.iter().take(num_buckets).map(|c| c.norm()).collect();
 
             // Update the maximum value seen so far
             let max_value = raw_values.iter().cloned().fold(f32::MIN, f32::max);
 
             // Update row_colors with scaled values
             row_colors.clear();
-            row_colors.push(raw_values.iter().map(|&v| {
-                let scaled_value = v / global_max_value;
-                let intensity = (scaled_value * 255.0) as u8;
-                Color32::from_rgb(intensity, 0, 0) // Store value in the red channel
-            }).collect());
+            row_colors.push(
+                raw_values
+                    .iter()
+                    .map(|&v| {
+                        let scaled_value = v / global_max_value;
+                        let intensity = (scaled_value * 255.0) as u8;
+                        Color32::from_rgb(intensity, 0, 0) // Store value in the red channel
+                    })
+                    .collect(),
+            );
 
             // println!("Updated row_colors: {:?}", row_colors);
 
             if max_value > global_max_value {
-                return max_value
+                return max_value;
             } else {
-                return global_max_value
+                return global_max_value;
             }
         }
         global_max_value
