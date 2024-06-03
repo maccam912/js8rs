@@ -10,8 +10,6 @@ use egui::Color32;
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
-const FFT_SIZE: usize = 2400;
-const SAMPLE_RATE: f32 = 48000.0;
 const MAX_FREQUENCY: f32 = 3000.0;
 
 /// The main application structure for JS8App.
@@ -39,6 +37,12 @@ pub struct Js8App {
     /// Shared maximum value for normalization.
     #[serde(skip)]
     max_value: Arc<Mutex<f32>>,
+    /// Sample rate of the selected audio input device.
+    #[serde(skip)]
+    sample_rate: f32,
+    /// FFT size calculated based on the sample rate.
+    #[serde(skip)]
+    fft_size: usize,
 }
 
 impl Default for Js8App {
@@ -46,14 +50,25 @@ impl Default for Js8App {
     fn default() -> Self {
         let host = cpal::default_host();
         let devices: Vec<Device> = host.input_devices().unwrap().collect();
+        let selected_device_index = 0;
+        let sample_rate = devices
+            .get(selected_device_index)
+            .and_then(|device| device.default_input_config().ok())
+            .map(|format| format.sample_rate().0 as f32)
+            .unwrap_or(48000.0); // Fallback to 48000.0 if unable to get sample rate
+
+        let fft_size = (sample_rate / 6.25).ceil() as usize;
+
         Self {
-            audio_data: Arc::new(Mutex::new(VecDeque::with_capacity(FFT_SIZE))),
+            audio_data: Arc::new(Mutex::new(VecDeque::with_capacity(fft_size))),
             stream: None,
             devices,
-            selected_device_index: 0,
+            selected_device_index,
             row_colors: Arc::new(Mutex::new(vec![])),
             min_value: 0.0,
             max_value: Arc::new(Mutex::new(0.0)),
+            sample_rate,
+            fft_size,
         }
     }
 }

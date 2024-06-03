@@ -2,6 +2,7 @@ use super::*;
 use cpal::traits::StreamTrait;
 use rustfft::num_complex::Complex;
 use rustfft::FftPlanner;
+use std::time::{Duration, Instant};
 
 impl Js8App {
     /// Starts the audio stream for the selected input device.
@@ -19,7 +20,7 @@ impl Js8App {
         };
 
         // Ensure the sample rate matches 48 kHz
-        if config.sample_rate().0 != SAMPLE_RATE as u32 {
+        if config.sample_rate().0 != self.sample_rate as u32 {
             eprintln!(
                 "Warning: The device sample rate is not 48 kHz, but {} Hz",
                 config.sample_rate().0
@@ -35,8 +36,10 @@ impl Js8App {
         let row_colors = self.row_colors.clone();
         let max_value = self.max_value.clone();
         let mut planner = FftPlanner::new();
-        let fft = planner.plan_fft_forward(FFT_SIZE);
+        let fft = planner.plan_fft_forward(self.fft_size);
         let scratch = vec![Complex { re: 0.0, im: 0.0 }; fft.get_inplace_scratch_len()];
+
+        let mut last_update = Instant::now();
 
         let input_callback = {
             let audio_data = audio_data.clone();
@@ -44,18 +47,23 @@ impl Js8App {
             let max_value = max_value.clone();
             let fft = fft.clone();
             let mut scratch = scratch.clone();
+            let fft_size = self.fft_size;
             move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                let mut audio_data = audio_data.lock().unwrap();
-                let mut row_colors = row_colors.lock().unwrap();
-                let mut max_value = max_value.lock().unwrap();
-                *max_value = Self::process_audio_data(
-                    *max_value,
-                    data,
-                    &mut audio_data,
-                    &mut row_colors,
-                    &*fft,
-                    &mut scratch,
-                );
+                if last_update.elapsed() >= Duration::from_secs_f32(0.16) {
+                    let mut audio_data = audio_data.lock().unwrap();
+                    let mut row_colors = row_colors.lock().unwrap();
+                    let mut max_value = max_value.lock().unwrap();
+                    *max_value = Self::process_audio_data(
+                        fft_size,
+                        *max_value,
+                        data,
+                        &mut audio_data,
+                        &mut row_colors,
+                        &*fft,
+                        &mut scratch,
+                    );
+                    last_update = Instant::now();
+                }
             }
         };
 
@@ -95,6 +103,7 @@ impl Js8App {
     ///
     /// The updated global maximum value.
     fn process_audio_data(
+        fft_size: usize,
         global_max_value: f32,
         data: &[f32],
         audio_data: &mut VecDeque<f32>,
@@ -104,7 +113,7 @@ impl Js8App {
     ) -> f32 {
         // Convert stereo to mono and store in the audio buffer
         for samples in data.chunks(2) {
-            if audio_data.len() == FFT_SIZE {
+            if audio_data.len() == fft_size {
                 audio_data.pop_front();
             }
             let mono_sample = (samples[0] + samples[1]) / 2.0;
@@ -112,7 +121,7 @@ impl Js8App {
         }
 
         // Perform FFT on the audio data
-        if audio_data.len() == FFT_SIZE {
+        if audio_data.len() == fft_size {
             let mut buffer: Vec<Complex<f32>> = audio_data
                 .iter()
                 .map(|&x| Complex { re: x, im: 0.0 })

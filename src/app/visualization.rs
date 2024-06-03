@@ -13,8 +13,8 @@ impl Js8App {
         }
 
         // Calculate the fraction of the spectrum to display
-        let spectrum_fraction = MAX_FREQUENCY / SAMPLE_RATE;
-        let num_buckets = spectrum_fraction * FFT_SIZE as f32;
+        let spectrum_fraction = MAX_FREQUENCY / self.sample_rate;
+        let num_buckets = spectrum_fraction * self.fft_size as f32;
         let bar_width = ui.available_width() / num_buckets;
         let max_height = ui.available_height();
 
@@ -54,8 +54,8 @@ impl Js8App {
         let row_width = ui.available_width();
 
         // Calculate the fraction of the spectrum to display
-        let spectrum_fraction = MAX_FREQUENCY / SAMPLE_RATE;
-        let num_buckets = (spectrum_fraction * FFT_SIZE as f32).ceil() as usize;
+        let spectrum_fraction = MAX_FREQUENCY / self.sample_rate;
+        let num_buckets = (spectrum_fraction * self.fft_size as f32).ceil() as usize;
 
         let painter = ui.painter();
 
